@@ -53,5 +53,5 @@ with serial.Serial(serialport, baudrate=115200, timeout=0.05) as ser:
   motors[1].set_duty(ser, 0.1)
   motors[2].set_duty(ser, 0.3)
   time.sleep(1)
-  motor.shutdown() # Not needed but good practice
+  motors[2].shutdown() # You only have to shutdown the main VESC, the other VESCs will be shutdown automatically
 ```
