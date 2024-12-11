@@ -4,6 +4,7 @@ A Python implementation to control one or multiple VESCs over a single serial (U
 ## Example usage (Duty cycle)
 ```python
 import serial
+import time
 from motor import Motor
 
 serialport = "/dev/ttyACM0"
