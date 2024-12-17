@@ -1,5 +1,5 @@
 # VescPy
-A Python implementation to control one or multiple VESCs over a single serial (USB) connection, tested with the latest firmware (v6.05). I made this for a custom robotics project and thus focused on position control, but it should be easy to add additional functions.
+A Python implementation to control one or multiple VESCs over a single serial (USB) connection, tested with the latest firmware (v6.05). I made this for a custom robotics project and thus focused on position control, but it should be easy to add additional functions. I'm also not a Computer Scientist so some implementations may be poorly coded, but it works for our project.
 
 ## Example usage (Duty cycle)
 ```python
