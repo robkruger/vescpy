@@ -80,6 +80,7 @@ class Package:
         self.crc.append(crc & 0xFF)
 
     def send(self, serial):
+        command = Commands(int(self.payload[0]))
         package = bytearray([self.startByte, self.payloadLength] + self.payload + self.crc + [0x03])
         serial.write(package)
 
@@ -108,12 +109,16 @@ class Package:
                         motor.tachometer = struct.unpack('>i', bytearray(self.payload[45:49]))[0]
                         motor.tachometer_abs = struct.unpack('>i', bytearray(self.payload[49:53]))[0]
                         motor.mc_fault_code = struct.unpack('>b', bytearray([self.payload[53]]))[0]
-                        motor.pid_pos_now = (struct.unpack('>i', bytearray(self.payload[54:58]))[0] / 1e6) - motor.offset
+                        motor.pid_pos_now = (struct.unpack('>i', bytearray(self.payload[54:58]))[0] / 1e6) - motor.offset + motor.home_cooldown
+                        motor.home_cooldown = max(motor.home_cooldown - 1, 0)
                         motor.actual_pos = (struct.unpack('>i', bytearray(self.payload[54:58]))[0] / 1e6)
                         if motor.homed:
                             motor.last_clamped_pos = motor.clamped_pos if motor.clamped_pos != motor.offset else 0
                         motor.clamped_pos = (motor.pid_pos_now % 360)
-                        motor.pos = motor.clamped_pos + motor.rotations * 360
+                        if motor.is_can:
+                            motor.pos = motor.clamped_pos + motor.rotations * 360
+                        else:
+                            motor.pos = -(motor.clamped_pos + motor.rotations * 360)
                         motor.temp_mos1 = struct.unpack('>h', bytearray(self.payload[59:61]))[0] / 1e1
                         motor.temp_mos2 = struct.unpack('>h', bytearray(self.payload[61:63]))[0] / 1e1
                         motor.temp_mos3 = struct.unpack('>h', bytearray(self.payload[63:65]))[0] / 1e1

@@ -13,6 +13,7 @@ class Motor:
         self.can_ids = can_ids
         self.offset = 0
         self.homed = False
+        self.home_cooldown = 0
         self.rotations = 0
         
         self.temp_fet = -1
@@ -91,11 +92,17 @@ class Motor:
 
     def get_values(self, serial):
         package = Package()
-        package.encode_command(Commands.COMM_SET_DETECT, [0])
+        if self.is_can:
+            package.encode_command(Commands.COMM_FORWARD_CAN, [self.id, Commands.COMM_SET_DETECT.value, 0])
+        else:
+            package.encode_command(Commands.COMM_SET_DETECT, [0])
         package.send(serial)
 
         package = Package()
-        package.encode_command(Commands.COMM_GET_VALUES, [])
+        if self.is_can:
+            package.encode_command(Commands.COMM_FORWARD_CAN, [self.id, Commands.COMM_GET_VALUES.value])
+        else:
+            package.encode_command(Commands.COMM_GET_VALUES, [])
         package.send(serial)
 
         buffer = []
@@ -112,14 +119,25 @@ class Motor:
 
         package.decode([self])
 
-        if self.clamped_pos != None and self.last_clamped_pos != None and self.homed and self.last_clamped_pos != self.offset:
+        if self.clamped_pos != None and self.last_clamped_pos != None and self.homed:
             delta = self.clamped_pos - self.last_clamped_pos
             if delta > 180:
                 self.rotations -= 1
-                self.pos -= 360
+                # if self.is_can:
+                #     self.pos += 360
+                # else:
+                #     self.pos -= 360
             elif delta < -180:
                 self.rotations += 1
-                self.pos += 360
+                # if self.is_can:
+                #     self.pos -= 360
+                # else:
+                #     self.pos += 360
+
+        if self.is_can:
+            self.pos = self.clamped_pos + self.rotations * 360
+        else:
+            self.pos = -(self.clamped_pos + self.rotations * 360)
 
     def set_duty(self, serial, duty):
         package = Package()
@@ -132,15 +150,27 @@ class Motor:
     def set_pos(self, serial, pos):
         self.get_values(serial)
         package = Package()
-        package.encode_command(Commands.COMM_SET_POS, [int(((pos+self.offset)%360)*1e6)])
+        if self.is_can:
+            package.encode_command(Commands.COMM_FORWARD_CAN, [self.id, Commands.COMM_SET_POS.value, int(((pos+self.offset)%360)*1e6)])
+        else:
+            package.encode_command(Commands.COMM_SET_POS, [int(((pos+self.offset)%360)*1e6)])
         package.send(serial)
         return True
 
-    def go_to_pos(self, serial, pos, degrees_per_step=0.5, velocity=40, velocity_rampsteps=100):
+    def go_to_pos(self, serial, pos, degrees_per_step=0.5, velocity=40, velocity_rampsteps=None, can_motors=[None]):
         self.get_values(serial)
-        if abs(self.pos - pos) < 2 * degrees_per_step:
-            print("Already at position!")
-            return
+        for motor in can_motors:
+            motor.get_values(serial)
+
+        # if abs(self.pos - pos) < 2 * degrees_per_step:
+        #     print("Already at position!")
+        #     return
+        
+        # Over how many steps should the velocity ramp up
+        if velocity_rampsteps == None:
+            velocity_rampsteps = int(velocity / (degrees_per_step * 5)) # 5 is a magic number
+
+        # TODO: Make sure motors are aligned
 
         mid_pos = self.pos
         mid_positions = [[mid_pos, 0]]
@@ -175,6 +205,19 @@ class Motor:
                 mid_pos -= degrees_per_step
                 mid_positions.append([mid_pos, total_time])
 
+        # Change the ending steps to slowly decelerate, 3 times as slow as the initial acceleration
+        velocity_rampsteps *= 3
+        total_time = mid_positions[-velocity_rampsteps-1][1]
+        i = velocity_rampsteps
+        for _, time_stamp in mid_positions[-velocity_rampsteps:]:
+            current_velocity = (velocity / velocity_rampsteps) * (i)
+            time_increment = degrees_per_step / current_velocity
+            total_time += time_increment
+            mid_positions[-i][1] = total_time
+            time_stamp = total_time
+            i -= 1
+
+        # Make sure the last position is the desired position
         if mid_positions[-1][0] != pos:
             mid_positions[-1][0] = pos
 
@@ -188,17 +231,25 @@ class Motor:
                 continue
             
             tries = 1
-            success = self.set_pos(serial, position)
-            while not success and tries < 3:
-                success = self.set_pos(serial, position)
+            success = self.set_pos(serial, -position) and can_motors[0].set_pos(serial, position)
+            while not success and tries <= 3:
+                success = self.set_pos(serial, -position) and can_motors[0].set_pos(serial, position)
                 tries += 1
 
+        error = abs((self.pos) - pos)
+        print("Error: ", error)
+        # if error > 2:
+        #     self.go_to_pos(serial, pos, degrees_per_step=degrees_per_step, velocity=velocity, velocity_rampsteps=velocity_rampsteps)
+
+        time.sleep(1)
+        
         self.get_values(serial)
-        print("Final position: ", self.pos, self.actual_pos, self.offset, "Average speed: ", (mid_positions[-1][0] - mid_positions[0][0]) / (time.perf_counter() - start_time))
-        print("Error: ", abs((self.pos) - pos))
+        for motor in can_motors:
+            motor.get_values(serial)
+        print("Final position(s): ", self.pos, [motor.pos for motor in can_motors])
 
     def do_homing(self, serial):
         self.get_values(serial)
         self.offset = self.pid_pos_now
-        self.homed = True
-        
+        self.homed = True  
+        self.home_cooldown = 2      
